@@ -3,6 +3,7 @@ import vim
 complete_py_imported = True
 
 def run_ai_completition(context):
+    command_type = context['command_type']
     prompt = context['prompt']
     config = make_config(context['config'])
     config_options = config['options']
@@ -11,8 +12,19 @@ def run_ai_completition(context):
     engine = config['engine']
 
     def complete_engine(prompt):
-        openai_options = make_openai_options(config_options)
-        http_options = make_http_options(config_options)
+        # this engine is deprecated
+        openai_options = {
+            'model': config_options['model'],
+            'temperature': float(config_options['temperature']),
+            'stream': int(config_options['stream']) == 1,
+            'max_tokens': int(config_options['max_tokens']),
+        }
+        http_options = {
+            'request_timeout': float(config_options['request_timeout']),
+            'enable_auth': bool(int(config_options['enable_auth'])),
+            'token_file_path': config_options['token_file_path'],
+        }
+
         print_debug("[engine-complete] text:\n" + prompt)
 
         request = {
@@ -34,7 +46,15 @@ def run_ai_completition(context):
         chat_content = f"{initial_prompt}\n\n>>> user\n\n{prompt}".strip()
         messages = parse_chat_messages(chat_content)
         print_debug("[engine-chat] text:\n" + chat_content)
-        return make_chat_text_chunks(messages, config_options)
+
+        provider_class = load_provider(config['provider'])
+        provider = provider_class(command_type, config_options, ai_provider_utils)
+        response_chunks = provider.request(messages)
+
+        # TODO: omit `thinking` section when supported
+        text_chunks = map(lambda r: r['content'], response_chunks)
+
+        return text_chunks
 
     engines = {"chat": chat_engine, "complete": complete_engine}
 
@@ -42,11 +62,10 @@ def run_ai_completition(context):
         if prompt:
             print('Completing...')
             vim.command("redraw")
-            provider_class = load_provider(config['provider'])
-            provider = provider_class(config)
-            messages = parse_chat_messages(f">>> user\n\n{prompt}".strip())
-            text_chunks = provider.request(messages)
+
+            text_chunks = engines[engine](prompt)
             render_text_chunks(text_chunks)
+
             clear_echo_message()
     except BaseException as error:
         handle_completion_error(error)
